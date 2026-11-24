@@ -103,6 +103,8 @@ PAGE = r"""
     .entry-table input[type="number"], .roster-table input[type="number"] { text-align: center; }
     .team-name { font-weight: 700; }
     .result-table tbody tr:first-child td { border-top-color: transparent; }
+    .leaderboard { padding-top: 20px; margin-top: 20px; border-top: 1px solid var(--line); }
+    .leaderboard:first-child { padding-top: 0; margin-top: 0; border-top: 0; }
     .total { font-size: 18px; font-weight: 800; }
     .badge { display: inline-block; padding: 3px 8px; border-radius: 999px; background: #63d6a21a; color: var(--green); font-size: 12px; font-weight: 700; }
     .tie { color: #ffd18c; }
@@ -127,7 +129,7 @@ PAGE = r"""
     <div>
       <div class="eyebrow">Tournament toolkit</div>
       <h1>Free Fire Points</h1>
-      <p class="intro">Enter match placements and kills to calculate the live standings and apply the official tie-break order.</p>
+      <p class="intro">Enter match placements and kills to calculate standings. A team that has at least 60 points before a match wins Champion Rush by earning a Booyah in that match.</p>
     </div>
     <a class="button" href="/rules" target="_blank" rel="noopener">View rule <span aria-hidden="true">↗</span></a>
   </header>
@@ -156,14 +158,9 @@ PAGE = r"""
   </section>
 
   <section id="standings-panel" class="panel" hidden>
-    <div class="panel-head">
-      <div><h2><span class="section-number">02</span>Leaderboard</h2><p id="summary" class="hint"></p></div>
-    </div>
-    <div class="table-wrap">
-      <table class="result-table">
-        <thead id="standings-head"></thead>
-        <tbody id="standings"></tbody>
-      </table>
+    <div id="leaderboards"></div>
+    <div class="toolbar">
+      <button id="add-match-bottom" class="primary" type="button">＋ Add match</button>
     </div>
   </section>
 </main>
@@ -172,6 +169,7 @@ PAGE = r"""
   const matchesContainer = document.getElementById("matches");
   const message = document.getElementById("message");
   const standingsPanel = document.getElementById("standings-panel");
+  const leaderboards = document.getElementById("leaderboards");
   let matchCount = 0;
 
   function showMessage(text, kind) {
@@ -354,7 +352,9 @@ PAGE = r"""
   }
 
   function renumberMatches() {
-    [...matchesContainer.querySelectorAll(".game")].forEach((card, index) => {
+    const cards = [...matchesContainer.querySelectorAll(".game")];
+    matchCount = cards.length;
+    cards.forEach((card, index) => {
       card.dataset.match = String(index + 1);
       card.querySelector(".game-title").textContent = "Match " + (index + 1);
     });
@@ -373,31 +373,223 @@ PAGE = r"""
     return { teams, matches };
   }
 
-  function renderStandings(rows, matchCount) {
-    const body = document.getElementById("standings");
-    const header = document.getElementById("standings-head");
+  function championRushStatus(row) {
+    if (row.is_champion) return "Winner";
+    return row.champion_rush_eligible ? "Eligible" : "Not eligible";
+  }
+
+  function resultImageName(title) {
+    return title.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".png";
+  }
+
+  function fitCanvasText(context, value, maxWidth) {
+    let text = String(value ?? "");
+    if (context.measureText(text).width <= maxWidth) return text;
+    while (text && context.measureText(text + "…").width > maxWidth) {
+      text = text.slice(0, -1);
+    }
+    return text + "…";
+  }
+
+  async function createLeaderboardImage(title, rows) {
+    const isOverall = !title.startsWith("Match ");
+    const matchHeaders = isOverall
+      ? Array.from(
+        { length: rows[0].match_placements.length },
+        (_, index) => "Match " + (index + 1)
+      )
+      : ["Placement"];
+    const headers = [
+      "Rank", "Slot", "Team", ...matchHeaders,
+      "Booyahs", "Place pts", "Kills", "Total", "Champion Rush", "Tie-break"
+    ];
+    const values = rows.map(row => [
+      row.rank,
+      row.slot,
+      row.team,
+      ...row.match_placements.map(value => value === null ? "—" : value),
+      row.booyahs,
+      row.placement_points,
+      row.kills,
+      row.total_points,
+      championRushStatus(row),
+      row.tie_breaker
+    ]);
+    const columnWidths = [
+      64, 64, 180, ...matchHeaders.map(() => 84),
+      78, 88, 72, 82, 136, 190
+    ];
+    const padding = 28;
+    const titleHeight = 94;
+    const headerHeight = 42;
+    const rowHeight = 48;
+    const width = padding * 2 + columnWidths.reduce((total, item) => total + item, 0);
+    const height = titleHeight + headerHeight + rowHeight * rows.length + padding;
+    const scale = 2;
+    const canvas = document.createElement("canvas");
+    canvas.width = width * scale;
+    canvas.height = height * scale;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Could not create an image for this leaderboard.");
+    context.scale(scale, scale);
+    context.fillStyle = "#0c111b";
+    context.fillRect(0, 0, width, height);
+
+    context.fillStyle = "#f3f6fb";
+    context.font = "700 23px Segoe UI, Arial, sans-serif";
+    context.fillText(title, padding, 38);
+    const champion = rows.find(row => row.is_champion);
+    context.fillStyle = "#9ba9bc";
+    context.font = "14px Segoe UI, Arial, sans-serif";
+    context.fillText(
+      rows.length + " teams · total = placement points + kills"
+        + (champion ? " · Champion Rush winner: " + champion.team : ""),
+      padding,
+      65
+    );
+
+    let x = padding;
+    const tableTop = titleHeight;
+    headers.forEach((header, index) => {
+      context.fillStyle = "#1b2636";
+      context.fillRect(x, tableTop, columnWidths[index], headerHeight);
+      context.fillStyle = "#9ba9bc";
+      context.font = "600 12px Segoe UI, Arial, sans-serif";
+      context.textBaseline = "middle";
+      context.fillText(
+        fitCanvasText(context, header, columnWidths[index] - 16),
+        x + 8,
+        tableTop + headerHeight / 2
+      );
+      x += columnWidths[index];
+    });
+
+    values.forEach((row, rowIndex) => {
+      const y = tableTop + headerHeight + rowIndex * rowHeight;
+      x = padding;
+      row.forEach((value, columnIndex) => {
+        context.fillStyle = rowIndex % 2 === 0 ? "#151d2b" : "#111925";
+        context.fillRect(x, y, columnWidths[columnIndex], rowHeight);
+        context.fillStyle = columnIndex === 0 ? "#ff9f43" : "#f3f6fb";
+        context.font = columnIndex === 0
+          ? "700 14px Segoe UI, Arial, sans-serif"
+          : "14px Segoe UI, Arial, sans-serif";
+        context.textBaseline = "middle";
+        context.fillText(
+          fitCanvasText(context, value, columnWidths[columnIndex] - 16),
+          x + 8,
+          y + rowHeight / 2
+        );
+        context.strokeStyle = "#2c394c";
+        context.strokeRect(x, y, columnWidths[columnIndex], rowHeight);
+        x += columnWidths[columnIndex];
+      });
+    });
+
+    const blob = await new Promise((resolve, reject) => {
+      canvas.toBlob(image => {
+        if (image) resolve(image);
+        else reject(new Error("Could not encode the leaderboard image."));
+      }, "image/png");
+    });
+    return new File([blob], resultImageName(title), { type: "image/png" });
+  }
+
+  function downloadLeaderboardImage(image) {
+    const url = URL.createObjectURL(image);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = image.name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function shareLeaderboard(title, rows) {
+    try {
+      const image = await createLeaderboardImage(title, rows);
+      if (
+        typeof navigator.share === "function"
+        && typeof navigator.canShare === "function"
+        && navigator.canShare({ files: [image] })
+      ) {
+        await navigator.share({
+          files: [image],
+          title,
+          text: "Choose WhatsApp in the share sheet to send this leaderboard image."
+        });
+        showMessage("Leaderboard image shared successfully.", "success");
+      } else {
+        downloadLeaderboardImage(image);
+        showMessage(
+          "This browser cannot share image files directly. The PNG was downloaded; attach it in WhatsApp.",
+          "error"
+        );
+      }
+    } catch (error) {
+      if (error.name !== "AbortError") showMessage(error.message, "error");
+    }
+  }
+
+  async function saveLeaderboard(title, rows) {
+    try {
+      const image = await createLeaderboardImage(title, rows);
+      downloadLeaderboardImage(image);
+      showMessage(title + " saved as a PNG image.", "success");
+    } catch (error) {
+      showMessage("Could not save " + title + ": " + error.message, "error");
+    }
+  }
+
+  function renderLeaderboard(rows, title, isOverall) {
+    const section = document.createElement("section");
+    section.className = "leaderboard";
+    const heading = document.createElement("div");
+    heading.className = "panel-head";
+    const headingContent = document.createElement("div");
+    const titleElement = document.createElement("h2");
+    titleElement.textContent = title;
+    const summary = document.createElement("p");
+    summary.className = "hint";
+    summary.textContent = rows.length + " teams · total = placement points + kills"
+      + (isOverall && rows.some(row => row.is_champion)
+        ? " · Champion Rush winner ranks first; remaining teams are ranked by total points, then tie-breaks"
+        : "");
+    headingContent.append(titleElement, summary);
+
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "result-table";
+    const header = document.createElement("thead");
     const headingRow = document.createElement("tr");
-    ["Slot", "Team", ...Array.from({ length: matchCount }, (_, index) => "Match " + (index + 1)),
-      "Booyahs", "Place pts", "Kills", "Total", "Tie-break"
+    ["Rank", "Slot", "Team",
+      ...(isOverall
+        ? Array.from({ length: rows[0].match_placements.length }, (_, index) => "Match " + (index + 1))
+        : ["Placement"]),
+      "Booyahs", "Place pts", "Kills", "Total", "Champion Rush", "Tie-break"
     ].forEach(label => {
       const th = document.createElement("th");
       th.textContent = label;
       headingRow.append(th);
     });
-    header.replaceChildren(headingRow);
-    body.replaceChildren();
+    header.append(headingRow);
+    const body = document.createElement("tbody");
     rows.forEach(row => {
       const tr = document.createElement("tr");
       const cells = [
+        { text: row.rank },
         { text: row.slot },
         { text: row.team, className: "team-name" },
-        ...row.match_placements.map(placement => ({
+        ...(isOverall ? row.match_placements : [row.match_placements[0]]).map(placement => ({
           text: placement === null ? "—" : placement
         })),
         { text: row.booyahs },
         { text: row.placement_points },
         { text: row.kills },
-        { text: row.total_points, className: "total" }
+        { text: row.total_points, className: "total" },
+        { text: championRushStatus(row) }
       ];
       cells.forEach(item => {
         const td = document.createElement("td");
@@ -406,10 +598,10 @@ PAGE = r"""
         tr.append(td);
       });
       const tie = document.createElement("td");
-      if (row.tie_breaker === "Winner") {
+      if (row.is_champion || row.tie_breaker === "Winner") {
         const badge = document.createElement("span");
         badge.className = "badge";
-        badge.textContent = "Winner";
+        badge.textContent = row.is_champion ? "Champion Rush Winner" : "Winner";
         tie.append(badge);
       } else {
         tie.textContent = row.tie_breaker;
@@ -418,13 +610,45 @@ PAGE = r"""
       tr.append(tie);
       body.append(tr);
     });
-    document.getElementById("summary").textContent =
-      rows.length + " teams · " + matchCount + " matches · total = placement points + kills";
+    table.append(header, body);
+    wrap.append(table);
+
+    const actions = document.createElement("div");
+    actions.className = "toolbar";
+    const share = document.createElement("button");
+    share.type = "button";
+    share.textContent = "Share result";
+    share.addEventListener("click", () => shareLeaderboard(title, rows));
+    const save = document.createElement("button");
+    save.type = "button";
+    save.textContent = "Save result";
+    save.addEventListener("click", () => saveLeaderboard(title, rows));
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.textContent = "Hide leaderboard";
+    toggle.addEventListener("click", () => {
+      wrap.hidden = !wrap.hidden;
+      toggle.textContent = wrap.hidden ? "Show leaderboard" : "Hide leaderboard";
+      if (wrap.hidden) section.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+    actions.append(share, save, toggle);
+    heading.append(headingContent);
+    section.append(heading, wrap, actions);
+    leaderboards.append(section);
+  }
+
+  function renderStandings(rows, matchRows) {
+    leaderboards.replaceChildren();
+    matchRows.forEach((matchStandings, index) => {
+      renderLeaderboard(matchStandings, "Match " + (index + 1) + " leaderboard", false);
+    });
+    renderLeaderboard(rows, "Overall standings leaderboard", true);
     standingsPanel.hidden = false;
   }
 
   document.getElementById("add-team").addEventListener("click", () => addTeamRow());
   document.getElementById("add-match").addEventListener("click", addMatch);
+  document.getElementById("add-match-bottom").addEventListener("click", addMatch);
   document.getElementById("reset").addEventListener("click", () => window.location.reload());
   document.getElementById("calculate").addEventListener("click", async () => {
     message.className = "message";
@@ -439,7 +663,7 @@ PAGE = r"""
         showMessage(result.error || "Could not calculate standings.", "error");
         return;
       }
-      renderStandings(result.standings, result.match_count);
+      renderStandings(result.standings, result.match_standings);
       showMessage("Standings calculated successfully.", "success");
     } catch (error) {
       showMessage(error instanceof TypeError
@@ -524,10 +748,14 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
         }
         for team in normalized_teams
     }
+    champion_rush_winner = None
 
     for match_number, match in enumerate(matches, start=1):
         if not isinstance(match, dict) or not isinstance(match.get("results"), list):
             raise ValueError(f"Match {match_number} has invalid results.")
+        qualified_teams = {
+            name for name, row in stats.items() if row["total_points"] >= 60
+        }
         used_teams: set[str] = set()
         used_placements: set[int] = set()
         played = 0
@@ -572,6 +800,12 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
             row["total_points"] += PLACEMENT_POINTS[placement] + kills
             row["booyahs"] += placement == 1
             row["match_placements"][match_number] = placement
+            if (
+                champion_rush_winner is None
+                and team in qualified_teams
+                and placement == 1
+            ):
+                champion_rush_winner = team
             played += 1
         if not played:
             raise ValueError(f"Enter at least one placement for Match {match_number}.")
@@ -588,6 +822,33 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
         key=lambda row: (row["total_points"], row["booyahs"], row["kills"]),
         reverse=True,
     )
+    standings: list[dict[str, Any]] = []
+    next_rank = 1
+    if champion_rush_winner is not None:
+        champion = stats[champion_rush_winner]
+        standings.append(
+            {
+                "rank": 1,
+                "team": champion["team"],
+                "slot": champion["slot"],
+                "match_placements": [
+                    champion["match_placements"].get(match_number)
+                    for match_number in range(1, len(matches) + 1)
+                ],
+                "booyahs": champion["booyahs"],
+                "placement_points": champion["placement_points"],
+                "kills": champion["kills"],
+                "total_points": champion["total_points"],
+                "tie_breaker": "Champion Rush Winner",
+                "is_tied": False,
+                "is_champion": True,
+            }
+        )
+        base_sorted = [
+            row for row in base_sorted if row["team"] != champion_rush_winner
+        ]
+        next_rank = 2
+
     grouped: list[list[dict[str, Any]]] = []
     for row in base_sorted:
         key = (row["total_points"], row["booyahs"], row["kills"])
@@ -599,8 +860,6 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
         grouped.append([row])
 
-    standings: list[dict[str, Any]] = []
-    next_rank = 1
     for group in grouped:
         shared_match = None
         if len(group) > 1:
@@ -638,6 +897,7 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
                     "total_points": row["total_points"],
                     "tie_breaker": tie_breaker,
                     "is_tied": unresolved_tie,
+                    "is_champion": False,
                 }
             )
         next_rank += len(group)
@@ -662,9 +922,67 @@ def calculate():
         return jsonify(error="Request body must be a JSON object."), 400
     try:
         standings = calculate_standings(payload)
+        match_standings = []
+        champion_team = next(
+            (row["team"] for row in standings if row["is_champion"]), None
+        )
+        cumulative_points = {}
+        champion_decided = False
+        for match in payload["matches"]:
+            match_results = [
+                result for result in match["results"]
+                if result.get("placement") not in (None, "")
+            ]
+            played_names = {result["team"].casefold() for result in match_results}
+            match_teams = [
+                team for team in payload["teams"]
+                if (team if isinstance(team, str) else team["name"]).casefold()
+                in played_names
+            ]
+            current_match_standings = calculate_standings(
+                {"teams": match_teams, "matches": [{"results": match_results}]}
+            )
+            eligible_before_match = (
+                {
+                    team for team, points in cumulative_points.items()
+                    if points >= 60
+                }
+                if not champion_decided
+                else set()
+            )
+            champion_wins_match = (
+                champion_team is not None
+                and champion_team in eligible_before_match
+                and any(
+                    row["team"] == champion_team
+                    and row["match_placements"][0] == 1
+                    for row in current_match_standings
+                )
+            )
+            for row in current_match_standings:
+                row["champion_rush_eligible"] = (
+                    row["team"] in eligible_before_match
+                )
+                row["is_champion"] = row["team"] == champion_team and (
+                    champion_decided or champion_wins_match
+                )
+                cumulative_points[row["team"]] = (
+                    cumulative_points.get(row["team"], 0) + row["total_points"]
+                )
+            if champion_wins_match:
+                champion_decided = True
+            match_standings.append(current_match_standings)
+        for row in standings:
+            row["champion_rush_eligible"] = (
+                champion_team is None and row["total_points"] >= 60
+            )
     except ValueError as error:
         return jsonify(error=str(error)), 400
-    return jsonify(standings=standings, match_count=len(payload["matches"]))
+    return jsonify(
+        standings=standings,
+        match_standings=match_standings,
+        match_count=len(payload["matches"]),
+    )
 
 
 if __name__ == "__main__":

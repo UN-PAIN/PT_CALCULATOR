@@ -28,6 +28,10 @@ Each match awards placement points and kill points:
 
 The calculator supports up to 12 teams per match, matching the placement table in the rulebook. Enter each team's official slot number (1–12) and assigned name in the Team slots section. Slot numbers must be unique; the leaderboard and match entry show each team under its assigned slot. Leave placement blank for a team that did not play that match; that team must have zero kills for that match.
 
+## Champion Rush
+
+Champion Rush unlocks for a team after it finishes a match with at least 60 cumulative points. To win, that team must earn a Booyah in a later match; a Booyah in the same match where it first reaches 60 points does not count. The first team to meet both conditions is the Champion Rush winner and is ranked first, regardless of total points. All other teams are ordered by total points, applying the tie-break order below when needed.
+
 ## Tie-break order
 
 When teams have the same total points, apply these criteria in order:
@@ -46,6 +50,10 @@ If tied teams have no match in which they all played, the calculator leaves them
 4. Select **Calculate standings**. Invalid or duplicate slots, placements, and other input errors are reported on the page.
 
 Each match must have at least one placement, and every listed team must have a result in at least one match.
+
+## Leaderboards and results
+
+After calculating, the page shows a separate leaderboard for each match and an overall standings leaderboard. Each leaderboard has independent **Share result**, **Save result**, and show/hide controls. Sharing uses the browser's share feature when available, otherwise it copies the result to the clipboard; saving downloads that leaderboard as a CSV file. Use **Add match** below the leaderboards to enter another game.
 
 ## Rulebook reference
 
