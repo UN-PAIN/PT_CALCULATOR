@@ -1,5 +1,13 @@
 # Free Fire Tournament Rules
 
+## Web interface
+
+Run `python Calculator.py` from the `PT_CALCULATOR` folder. It starts the local server and opens the interface in your browser.
+
+To build a Windows application folder, run `build_windows.bat`. It creates `Executable\PTCalculator\PTCalculator.exe`; launch the executable to start the calculator and open its interface. Building requires Python and pip, and the script installs the build tools from `requirements-build.txt`.
+
+The web interface in the sibling `UI` folder uses the calculator's `/calculate` endpoint. When running from source, it is also available directly at `http://127.0.0.1:5000/ui/`.
+
 Scoring and tie-breaks are based on the **Free Fire at EWC 2026 Official Rulebook**, sections 5.4 and 5.5.
 
 ## Point distribution

@@ -215,18 +215,18 @@ class CalculateStandingsTests(unittest.TestCase):
                 "teams": [team("Alpha", 7), team("Bravo", 2)],
                 "matches": [
                     {"results": [result("Alpha", 1, 3), result("Bravo", 2, 4)]},
-                    {"results": [result("Alpha", 10), result("Bravo", 1)]},
+                    {"results": [result("Alpha", 2), result("Bravo", 1)]},
                 ],
             }
         )
 
         self.assertEqual(
             [(row["team"], row["total_points"], row["booyahs"]) for row in standings],
-            [("Bravo", 25, 1), ("Alpha", 16, 1)],
+            [("Bravo", 25, 1), ("Alpha", 24, 1)],
         )
         self.assertEqual(
             [row["match_placements"] for row in standings],
-            [[2, 1], [1, 10]],
+            [[2, 1], [1, 2]],
         )
         self.assertEqual(
             [(row["team"], row["slot"]) for row in standings],
@@ -256,8 +256,8 @@ class CalculateStandingsTests(unittest.TestCase):
             {
                 "teams": [team("Alpha", 8), team("Bravo", 3)],
                 "matches": [
-                    {"results": [result("Alpha", 2), result("Bravo", 3)]},
-                    {"results": [result("Alpha", 3), result("Bravo", 2)]},
+                    {"results": [result("Alpha", 1), result("Bravo", 2)]},
+                    {"results": [result("Alpha", 2), result("Bravo", 1)]},
                 ],
             }
         )
@@ -290,6 +290,34 @@ class CalculateStandingsTests(unittest.TestCase):
                     "teams": [team("Alpha", 1), team("Bravo", 2)],
                     "matches": [
                         {"results": [result("Alpha", 1), result("Bravo", 1)]}
+                    ],
+                }
+            )
+
+    def test_rejects_placement_above_number_of_teams_in_that_match(self):
+        with self.assertRaisesRegex(ValueError, "placement in Match 2 must be between 1 and 2"):
+            calculate_standings(
+                {
+                    "teams": [
+                        team("Alpha", 1),
+                        team("Bravo", 2),
+                        team("Charlie", 3),
+                    ],
+                    "matches": [
+                        {
+                            "results": [
+                                result("Alpha", 1),
+                                result("Bravo", 2),
+                                result("Charlie", 3),
+                            ]
+                        },
+                        {
+                            "results": [
+                                result("Alpha", 1),
+                                result("Bravo", 3),
+                                result("Charlie", None),
+                            ]
+                        },
                     ],
                 }
             )
@@ -327,6 +355,36 @@ class CalculateStandingsTests(unittest.TestCase):
 
 
 class CalculateEndpointTests(unittest.TestCase):
+    def test_scoring_rules_page_is_served_as_html(self):
+        response = app.test_client().get("/rules")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "text/html")
+        self.assertIn(b"Placement points", response.data)
+        self.assertIn(b"Champion Rush", response.data)
+        response.close()
+
+    def test_root_redirects_to_ui_folder_interface(self):
+        response = app.test_client().get("/", follow_redirects=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(b"Teams and matches", response.data)
+        self.assertNotIn(b"Free Fire Points", response.data)
+        response.close()
+
+    def test_ui_page_and_assets_are_served(self):
+        client = app.test_client()
+
+        page = client.get("/ui/")
+        self.assertEqual(page.status_code, 200)
+        self.assertIn(b"PT Calculator", page.data)
+        page.close()
+
+        script = client.get("/ui/app.js")
+        self.assertEqual(script.status_code, 200)
+        self.assertIn(b"match_standings", script.data)
+        script.close()
+
     def test_six_teams_across_four_matches_rank_after_champion_rush(self):
         names = ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"]
         placements = [

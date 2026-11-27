@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
+import threading
+import webbrowser
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, render_template_string, request, send_file
+from flask import Flask, jsonify, redirect, request, send_file, send_from_directory
 
 PLACEMENT_POINTS = {
     1: 12,
@@ -23,7 +26,12 @@ PLACEMENT_POINTS = {
     12: 0,
 }
 MAX_TEAMS = 12
-RULES_FILE = Path(__file__).with_name("README.md")
+if getattr(sys, "frozen", False):
+    RESOURCE_DIRECTORY = Path(getattr(sys, "_MEIPASS"))
+    UI_DIRECTORY = RESOURCE_DIRECTORY / "UI"
+else:
+    APP_DIRECTORY = Path(__file__).resolve().parent
+    UI_DIRECTORY = APP_DIRECTORY.parent / "UI"
 
 app = Flask(__name__)
 
@@ -753,6 +761,12 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
     for match_number, match in enumerate(matches, start=1):
         if not isinstance(match, dict) or not isinstance(match.get("results"), list):
             raise ValueError(f"Match {match_number} has invalid results.")
+        match_team_count = sum(
+            1
+            for result in match["results"]
+            if isinstance(result, dict)
+            and result.get("placement") not in (None, "")
+        )
         qualified_teams = {
             name for name, row in stats.items() if row["total_points"] >= 60
         }
@@ -787,7 +801,10 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
 
             placement = _read_integer(
-                placement_value, f"{team}'s placement in Match {match_number}", 1, MAX_TEAMS
+                placement_value,
+                f"{team}'s placement in Match {match_number}",
+                1,
+                match_team_count,
             )
             if placement in used_placements:
                 raise ValueError(f"Placement {placement} is used more than once in Match {match_number}.")
@@ -907,12 +924,23 @@ def calculate_standings(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 @app.get("/")
 def index():
-    return render_template_string(PAGE)
+    return redirect("/ui/")
 
 
 @app.get("/rules")
 def rules():
-    return send_file(RULES_FILE, mimetype="text/markdown")
+    return send_file(UI_DIRECTORY / "rules.html")
+
+
+@app.get("/ui/")
+@app.get("/ui")
+def ui():
+    return send_file(UI_DIRECTORY / "index.html")
+
+
+@app.get("/ui/<path:filename>")
+def ui_asset(filename: str):
+    return send_from_directory(UI_DIRECTORY, filename)
 
 
 @app.post("/calculate")
@@ -986,8 +1014,16 @@ def calculate():
 
 
 if __name__ == "__main__":
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "5000"))
+    threading.Timer(
+        1,
+        webbrowser.open,
+        args=(f"http://127.0.0.1:{port}/",),
+    ).start()
     app.run(
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "5000")),
+        host=host,
+        port=port,
         debug=False,
+        use_reloader=False,
     )
